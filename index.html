@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>train</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        text-align: center;
+      }
+      input,
+      button {
+        margin: 10px;
+        padding: 8px;
+        font-size: 16px;
+      }
+      #output {
+        margin-top: 20px;
+        font-weight: bold;
+      }
+      #log {
+        text-align: left;
+        max-width: 400px;
+        margin: auto;
+        background: #f4f4f4;
+        padding: 10px;
+        border-radius: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>House Price Predictor</h2>
+
+    <label>Bedrooms:</label>
+    <input type="number" id="bedrooms" min="1" value="3" />
+
+    <label>Bathrooms:</label>
+    <input type="number" id="bathrooms" min="1" value="2" />
+
+    <button onclick="predictPrice()">Predict Price</button>
+
+    <div id="output"></div>
+    <div id="log"></div>
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.11.0/dist/tf.min.js"
+      type="text/javascript"
+    ></script>
+    <!-- <script type="module" src="script.js"></script> -->
+    <script>
+    const log = (message) => {
+      document.getElementById('log').innerHTML += `<p>${message}</p>`;
+    };
+
+    let featureMin, featureMax, labelMin, labelMax;
+    let trainedModel;
+
+    async function loadModel() {
+      log("Initializing model...");
+      const model = tf.sequential();
+      model.add(tf.layers.dense({ inputShape: [2], units: 10, activation: "relu" }));
+      model.add(tf.layers.dense({ units: 1 }));
+      model.compile({ optimizer: tf.train.adam(), loss: "meanSquaredError", metrics: 'accuracy' });
+
+      log("Loading and processing data...");
+      const csvUrl = "./kc_house_data.csv";
+      const dataset = tf.data.csv(csvUrl);
+      const dataArray = await dataset.toArray();
+
+      log(`Loaded ${dataArray.length} records`);
+
+      // Extract features (bedrooms, bathrooms) and labels (price)
+      const INPUTS = dataArray.map(d => [d.bedrooms, d.bathrooms]);
+      const OUTPUTS = dataArray.map(d => d.price);
+
+      // Convert to tensors
+      const INPUTS_TENSOR = tf.tensor2d(INPUTS);
+      const OUTPUTS_TENSOR = tf.tensor1d(OUTPUTS);
+
+      // Normalize features
+      featureMin = INPUTS_TENSOR.min(0);
+      featureMax = INPUTS_TENSOR.max(0);
+      const normalizedInputs = INPUTS_TENSOR.sub(featureMin).div(featureMax.sub(featureMin));
+
+      // Normalize labels
+      labelMin = OUTPUTS_TENSOR.min();
+      labelMax = OUTPUTS_TENSOR.max();
+      const normalizedOutputs = OUTPUTS_TENSOR.sub(labelMin).div(labelMax.sub(labelMin));
+
+      log("Training model...");
+      await model.fit(normalizedInputs, normalizedOutputs, {
+        epochs: 10,
+        batchSize: 32,
+        shuffle: true,
+        callbacks: {
+          onEpochEnd: (epoch, logs) => console.log(`Epoch ${epoch + 1}: Loss = ${logs.loss.toFixed(4)} \n Accuracy = ${logs.accuracy.toFixed(4)}`)
+        }
+      });
+
+      log("Training complete!");
+      trainedModel = model;
+    }
+
+    loadModel();
+
+    async function predictPrice() {
+      if (!trainedModel) {
+        log("Model is still loading...");
+        return;
+      }
+
+      const bedrooms = parseFloat(document.getElementById('bedrooms').value);
+      const bathrooms = parseFloat(document.getElementById('bathrooms').value);
+
+      // Normalize input
+      const inputTensor = tf.tensor2d([[bedrooms, bathrooms]]);
+      const normalizedInput = inputTensor.sub(featureMin).div(featureMax.sub(featureMin));
+
+      log(`Normalized input: ${normalizedInput.arraySync()}`);
+
+      // Make prediction
+      const prediction = trainedModel.predict(normalizedInput);
+      const normalizedPrice = await prediction.data();
+
+      // Denormalize output
+      const denormalizedPrice = normalizedPrice[0] * (labelMax.dataSync()[0] - labelMin.dataSync()[0]) + labelMin.dataSync()[0];
+
+      // Update UI
+      document.getElementById('output').innerText = `Predicted Price: $${denormalizedPrice.toFixed(2)}`;
+      log(`Predicted price for ${bedrooms} bedrooms and ${bathrooms} bathrooms: $${denormalizedPrice.toFixed(2)}`);
+    }
+  </script>
+  </body>
+</html>
